@@ -96,7 +96,7 @@ func run(cmd *cobra.Command, args []string) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Encountered %d permission errors\n", fh.permissionErrors.Load())
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "FS Diff hash %d\n", eh.hash)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "FS Diff hash %016x\n", eh.hash)
 }
 
 type entryHash struct {
@@ -106,7 +106,7 @@ type entryHash struct {
 }
 
 func printEntry(e entryHash, depth int) {
-	fmt.Println(strings.Repeat("  ", depth)+e.path, e.hash)
+	fmt.Println(strings.Repeat("\t", depth)+fmt.Sprintf("%016x", e.hash), e.path)
 	for _, entry := range e.entries {
 		printEntry(entry, depth+1)
 	}
