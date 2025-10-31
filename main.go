@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -257,35 +260,84 @@ func (f *fsHasher) hashDir(path string) (uint64, error) {
 		return 0, fmt.Errorf("read dir: %w", err)
 	}
 
-	h := xxhash.New()
-
+	wg := sync.WaitGroup{}
+	errs := make(chan error)
+	results := make(chan entryHash)
 	for _, entry := range entries {
-		entryPath := filepath.Join(path, entry.Name())
+		wg.Go(func() {
+			entryPath := filepath.Join(path, entry.Name())
 
-		var skip bool
-		if skip, err = f.skip(entryPath); err != nil {
-			return 0, fmt.Errorf("skip: %w", err)
-		} else if skip {
-			continue
-		}
+			var skip bool
+			if skip, err = f.skip(entryPath); err != nil {
+				select {
+				case errs <- fmt.Errorf("skip: %w", err):
+				case <-f.ctx.Done():
+				}
+				return
+			} else if skip {
+				return
+			}
 
-		var eh uint64
-		if entry.IsDir() {
-			eh, err = f.hashDir(entryPath)
-		} else {
-			eh, err = f.hashFile(entryPath, entry)
-		}
-		if err != nil {
+			var eh uint64
+			if entry.IsDir() {
+				eh, err = f.hashDir(entryPath)
+			} else {
+				eh, err = f.hashFile(entryPath, entry)
+			}
+			if err != nil {
+				select {
+				case errs <- err:
+				case <-f.ctx.Done():
+				}
+				return
+			}
+
+			select {
+			case results <- entryHash{path: entryPath, hash: eh}:
+			case <-f.ctx.Done():
+			}
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var ok bool
+	var result entryHash
+	hashResults := make([]entryHash, 0, len(results))
+loop:
+	for {
+		select {
+		case err, ok = <-errs:
+			if !ok {
+				return 0, errors.New("errors channel closed")
+			}
 			return 0, err
+		case result, ok = <-results:
+			if !ok {
+				break loop
+			}
+			hashResults = append(hashResults, result)
+		case <-f.ctx.Done():
+			return 0, f.ctx.Err()
 		}
+	}
+	close(errs)
 
+	slices.SortFunc(hashResults, func(a, b entryHash) int {
+		return cmp.Compare(a.path, b.path)
+	})
+
+	h := xxhash.New()
+	for _, eh := range hashResults {
 		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, eh)
+		binary.LittleEndian.PutUint64(buf, eh.hash)
 		if _, err = h.Write(buf); err != nil {
 			return 0, fmt.Errorf("hash entry: %w", err)
 		}
 	}
-
 	return h.Sum64(), nil
 }
 
