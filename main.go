@@ -196,6 +196,10 @@ func (f *fsHasher) hashDirWithDepth(path string, depth int) (entryHash, error) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
+		if os.IsPermission(err) {
+			f.permissionErrors.Add(1)
+			return entryHash{path: path}, nil
+		}
 		return entryHash{}, fmt.Errorf("read dir: %w", err)
 	}
 
@@ -257,6 +261,10 @@ func (f *fsHasher) hashDir(path string) (uint64, error) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
+		if os.IsPermission(err) {
+			f.permissionErrors.Add(1)
+			return 0, nil
+		}
 		return 0, fmt.Errorf("read dir: %w", err)
 	}
 
