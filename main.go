@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -72,11 +73,7 @@ func run(cmd *cobra.Command, args []string) {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Building fsdiff for %s\n", basePath)
 
 	ctx := cmd.Context()
-
-	fh := &fsHasher{
-		ctx:     ctx,
-		exclude: exclude,
-	}
+	fh := newFSHasher(ctx, exclude)
 
 	start := time.Now()
 	eh, err := fh.hashPath(basePath, depth)
@@ -88,12 +85,12 @@ func run(cmd *cobra.Command, args []string) {
 
 	printEntry(eh, 0)
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Built fsdiff in %s, %d files checked\n", duration, fh.files)
-	if fh.readErrors > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Encountered %d read errors\n", fh.readErrors)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Built fsdiff in %s, %d files checked\n", duration, fh.files.Load())
+	if fh.readErrors.Load() > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Encountered %d read errors\n", fh.readErrors.Load())
 	}
-	if fh.permissionErrors > 0 {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Encountered %d permission errors\n", fh.permissionErrors)
+	if fh.permissionErrors.Load() > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Encountered %d permission errors\n", fh.permissionErrors.Load())
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "FS Diff hash %d\n", eh.hash)
@@ -116,9 +113,19 @@ type fsHasher struct {
 	ctx     context.Context
 	exclude []string
 
-	files            int
-	readErrors       int
-	permissionErrors int
+	files            *atomic.Int32
+	readErrors       *atomic.Int32
+	permissionErrors *atomic.Int32
+}
+
+func newFSHasher(ctx context.Context, exclude []string) *fsHasher {
+	return &fsHasher{
+		ctx:              ctx,
+		exclude:          exclude,
+		files:            &atomic.Int32{},
+		readErrors:       &atomic.Int32{},
+		permissionErrors: &atomic.Int32{},
+	}
 }
 
 func (f *fsHasher) done() error {
@@ -287,7 +294,7 @@ func (f *fsHasher) hashFile(path string, info fs.DirEntry) (uint64, error) {
 		return 0, err
 	}
 
-	f.files++
+	f.files.Add(1)
 	h := xxhash.New()
 
 	if _, err := h.WriteString(path); err != nil {
@@ -308,7 +315,7 @@ func (f *fsHasher) hashFile(path string, info fs.DirEntry) (uint64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsPermission(err) {
-			f.permissionErrors++
+			f.permissionErrors.Add(1)
 			return h.Sum64(), nil
 		}
 		return 0, fmt.Errorf("open file: %w", err)
@@ -317,7 +324,7 @@ func (f *fsHasher) hashFile(path string, info fs.DirEntry) (uint64, error) {
 
 	if _, err = io.Copy(h, file); err != nil {
 		if errors.Is(err, syscall.EIO) {
-			f.readErrors++
+			f.readErrors.Add(1)
 			return h.Sum64(), nil
 		}
 		return 0, fmt.Errorf("hash file: %w", err)
