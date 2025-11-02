@@ -125,7 +125,11 @@ type entryHash struct {
 }
 
 func printEntry(out io.Writer, e entryHash, depth int) {
-	_, _ = fmt.Fprintln(out, strings.Repeat("\t", depth)+fmt.Sprintf("%016x", e.hash), e.path)
+	path := e.path
+	if depth > 0 {
+		path = filepath.Base(path)
+	}
+	_, _ = fmt.Fprintln(out, strings.Repeat("\t", depth)+fmt.Sprintf("%016x", e.hash), path)
 	for _, entry := range e.entries {
 		printEntry(out, entry, depth+1)
 	}
