@@ -34,6 +34,7 @@ func main() {
 	}
 	cmd.Flags().IntP("depth", "d", 0, "depth of directory hierarchy")
 	cmd.Flags().StringArrayP("exclude", "e", nil, "exclude files or directories")
+	cmd.Flags().StringP("output", "o", "", "output file name")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -63,6 +64,12 @@ func run(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	outputPath, err := cmd.Flags().GetString("output")
+	if err != nil {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Error reading flags:", err)
+		return
+	}
+
 	info, err := os.Lstat(basePath)
 	if err != nil {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Error:", err)
@@ -86,7 +93,19 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	duration := time.Since(start)
 
-	printEntry(eh, 0)
+	out := cmd.OutOrStdout()
+	if outputPath != "" {
+		var outFile *os.File
+		outFile, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Error:", err)
+			return
+		}
+		defer func() { _ = outFile.Close() }()
+		out = outFile
+	}
+
+	printEntry(out, eh, 0)
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Built fsdiff in %s, %d files checked\n", duration, fh.files.Load())
 	if fh.readErrors.Load() > 0 {
@@ -105,10 +124,10 @@ type entryHash struct {
 	entries []entryHash
 }
 
-func printEntry(e entryHash, depth int) {
-	fmt.Println(strings.Repeat("\t", depth)+fmt.Sprintf("%016x", e.hash), e.path)
+func printEntry(out io.Writer, e entryHash, depth int) {
+	_, _ = fmt.Fprintln(out, strings.Repeat("\t", depth)+fmt.Sprintf("%016x", e.hash), e.path)
 	for _, entry := range e.entries {
-		printEntry(entry, depth+1)
+		printEntry(out, entry, depth+1)
 	}
 }
 
