@@ -21,6 +21,8 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/cespare/xxhash/v2"
 	"github.com/spf13/cobra"
+
+	"github.com/mymmrac/fsdiff/pkg/version"
 )
 
 func main() {
@@ -29,6 +31,7 @@ func main() {
 		Short:         "Filesystem Diff",
 		Args:          cobra.ExactArgs(1),
 		Run:           run,
+		Version:       fmt.Sprintf("%s (%s), built at %s", version.Version(), version.Modified(), version.BuildTime()),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
